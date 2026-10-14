@@ -202,8 +202,8 @@ function plot(files) {
       lng: f.imageMediaMetadata.location.longitude,
     };
     bounds.extend(position);
-    const marker = new google.maps.marker.AdvancedMarkerElement({ position, title: f.name });
-    marker.addListener('click', () => {
+    const marker = new google.maps.marker.AdvancedMarkerElement({ position, title: f.name, gmpClickable: true });
+    marker.addEventListener('gmp-click', () => {
       infoWindow.setContent(infoHtml(f));
       infoWindow.open({ map, anchor: marker });
     });
