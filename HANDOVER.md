@@ -4,6 +4,43 @@ Written 2026-10-14 by a Claude Code cloud session. It's addressed to a fresh Cla
 
 ---
 
+## 0. Update 2026-10-14 (local session): read this first
+
+**The design changed. Where this section disagrees with §3, §6 or §8 below, this section wins. The rest of the file is kept as history.**
+
+### Reversed decisions
+
+- **Scanning a whole Drive is forbidden.** The owner's rule: the app MUST NOT scan a user's entire Drive or Photos. The `drive.metadata.readonly` auto-scan is gone.
+- **Photos come from user picks only:**
+  - **Local files:** Choose photos, Choose folder, or drag and drop. No sign-in.
+  - **Google Drive Picker** with the `drive.file` scope, which is non-sensitive and reaches only the picked files. Picked files are downloaded (`alt=media`) into the browser and go through the same pipeline as local files.
+- **GPS comes from EXIF in the browser** via `exifr@7.1.3` (`full` build, HEIC-capable), not from Drive's `imageMediaMetadata`. This avoids the `thumbnailLink` CORS problem, and thumbnails come from the file itself.
+- **Dependencies pinned:** `exifr@7.1.3`, `@googlemaps/markerclusterer@2.6.2`. Keep exact versions.
+
+### Why: verified against Google's docs on 2026-10-14
+
+- The end user shoots on an **iPhone**. The likely backup target is iCloud (no API) or Google Photos. Drive is the least likely.
+- **Google Photos is a dead end for GPS.** The Picker API has no location field, `=d` downloads strip "the location metadata", and since 2025-04 the Library API only reads app-created items. The workaround is a download or Takeout, then local files.
+- Picking a folder under `drive.file` probably doesn't grant access to its children (inferred, not tested). So the Picker allows browsing into folders but not selecting a folder.
+
+### Current state: done and tested
+
+| Item | State |
+|---|---|
+| Cloud project | `sitevisits-511607`, number `673202376182`, billing linked |
+| APIs | Maps JavaScript, Drive, Picker enabled |
+| API key "Maps Platform API Key" | Referrers: Pages URL, `localhost:8000`, `docs.google.com`. APIs: Maps JS and Picker. In `CONFIG.MAPS_API_KEY`. |
+| Auth platform | External, **Testing**. Test users: owner and end user. Scope `drive.file` only. |
+| OAuth client `sitevisits` | Web. Origins `https://n3g3ntr0pe.github.io`, `http://localhost:8000`. In `CONFIG.OAUTH_CLIENT_ID`. The auto-created client secret is unused and must never be committed. |
+| Local test | Owner confirmed local files and the Drive Picker work on `localhost:8000` |
+
+**Open items:**
+- Live test on Pages.
+- Hand-off to the end user (README "Instructions for users", including the iPhone **Options → Location** tip).
+- Check that the end user's iPhone has Location Services → Camera turned on.
+
+---
+
 ## 1. What this is
 
 **Photo Map** is a rapid prototype: a single web page that plots the GPS locations of photos stored in someone's **Google Drive** on a Google Map.

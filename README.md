@@ -1,81 +1,70 @@
 # Photo Map
 
-A single web page that plots the GPS locations of photos in someone's Google Drive on a Google Map. Each person signs in with their own Google account. Their photo data goes straight from Google Drive to their own browser. Nothing is stored or sent anywhere else.
+A single web page that plots the GPS locations of photos on a Google Map. The user chooses which photos to map, from their own device or from their own Google Drive. The app never scans a whole Drive or photo library. Photos are read in the user's browser, and nothing is stored or sent anywhere else.
 
-Live site (once Pages is on): **https://n3g3ntr0pe.github.io/sitevisits/**
+Live site: **https://n3g3ntr0pe.github.io/sitevisits/**
 
 ---
 
-## 1. Publish on GitHub Pages
+## How it works
 
-1. The repo is `n3g3ntr0pe/sitevisits`, with `index.html` at the root of `main`. It must stay public for Pages on a free plan.
-2. Go to **Settings → Pages** (`https://github.com/n3g3ntr0pe/sitevisits/settings/pages`). Under **Build and deployment**, set the **Source** dropdown to **Deploy from a branch**. Under **Branch**, pick `main` and `/ (root)`, then click **Save**. Ignore the Visibility / GitHub Enterprise box on that page. It's an upsell and isn't needed.
-3. After a minute the site is live at `https://n3g3ntr0pe.github.io/sitevisits/`.
+| Source | What happens |
+|---|---|
+| **Choose photos / Choose folder / drag and drop** | The browser reads the photo files directly. No sign-in is needed. |
+| **From Google Drive** | The user signs in with Google and picks photos in the Google Picker. The app gets the `drive.file` scope, which only reaches the files picked. Each picked file is downloaded into the browser. |
 
-At this point the page loads but shows "Setup needed". That's expected.
+In both cases [exifr](https://github.com/MikeKovarik/exifr) reads the GPS position and capture date from the photo's EXIF data, including HEIC files from iPhones. Photos without GPS data are counted but not plotted.
 
-## 2. Set up Google Cloud
+Google Photos isn't supported as a source. Google's Photos APIs remove location data, so photos from there have to be downloaded first, for example with Google Takeout.
 
-Go to <https://console.cloud.google.com> and sign in with **your** account (the builder's, not the other user's).
+## Setup (already done for this repo)
 
-1. **Create a project**, e.g. "Photo Map".
-2. **Enable two APIs** (APIs & Services → Library):
-   - **Google Drive API**
-   - **Maps JavaScript API**. Google Maps requires a billing account on the project. A prototype with one user normally stays inside the free monthly usage.
-3. **Configure the OAuth consent screen** (Google Auth Platform / OAuth consent screen):
-   - Audience / user type: **External**
-   - Publishing status: leave it in **Testing**
-   - App name and support email: anything sensible, such as "Photo Map"
-   - Data access / scopes: add `.../auth/drive.metadata.readonly`
-   - **Test users: add the other user's Google account email**, and your own if you want to test.
-4. **Create the OAuth client ID** (Credentials → Create credentials → OAuth client ID):
-   - Application type: **Web application**
-   - Authorized JavaScript origins: `https://n3g3ntr0pe.github.io` (no path, no trailing slash)
-   - Optionally also add `http://localhost:8000` for local testing.
-   - Copy the **Client ID**.
-5. **Create the Maps API key** (Credentials → Create credentials → API key), then click **Edit**:
-   - Application restrictions: **Websites**, and add `https://n3g3ntr0pe.github.io/sitevisits/*` (plus `http://localhost:8000/*` if you test locally)
-   - API restrictions: **Maps JavaScript API** only
-   - Copy the **key**.
+Everything lives in Google Cloud project `sitevisits-511607` (project number `673202376182`).
 
-## 3. Add the credentials
+1. **GitHub Pages:** Settings → Pages → Deploy from a branch → `main`, `/ (root)`.
+2. **APIs enabled:** Maps JavaScript API, Google Drive API, Google Picker API. Maps needs a billing account on the project. A small prototype normally stays inside the free monthly usage.
+3. **API key** (one key for Maps and the Picker):
+   - Application restriction: **Websites**: `https://n3g3ntr0pe.github.io/sitevisits/*`, `http://localhost:8000/*`, `https://docs.google.com/*`. The Picker needs the last one.
+   - API restriction: **Maps JavaScript API** and **Google Picker API**.
+4. **Google Auth Platform:**
+   - Audience: **External**, publishing status **Testing**. Don't publish.
+   - Test users: everyone who will use the Drive button (up to 100).
+   - Data access: `.../auth/drive.file` only. It's a non-sensitive scope.
+   - Client: Web application, Authorized JavaScript origins `https://n3g3ntr0pe.github.io` and `http://localhost:8000`, no redirect URIs. The client secret isn't used.
+5. **`CONFIG` in `index.html`:** `MAPS_API_KEY`, `MAP_ID`, `OAUTH_CLIENT_ID` and `APP_ID` (the project number). If `OAUTH_CLIENT_ID` still starts with `YOUR_`, the Drive button stays hidden and local files still work.
 
-In `index.html`, edit the `CONFIG` block near the top:
+These values are meant to be public. An OAuth client ID and a project number aren't secrets, and the key only works from the listed websites and for the listed APIs.
 
-```js
-const CONFIG = {
-  OAUTH_CLIENT_ID: '1234567890-abc.apps.googleusercontent.com',
-  MAPS_API_KEY:    'AIza...',
-  MAP_ID:          'DEMO_MAP_ID',
-};
-```
-
-Commit the change. GitHub Pages redeploys within a minute or two.
-
-It's normal for both values to be visible in a public repo. An OAuth client ID isn't a secret, and the Maps key only works on your GitHub Pages address because of the website restriction.
-
-## 4. Hand it to the other user
+## Instructions for users
 
 Send them the link `https://n3g3ntr0pe.github.io/sitevisits/` and tell them:
 
-- Click **Sign in with Google** and choose the account that holds the photos.
-- Google will show **"Google hasn't verified this app"**. Click **Continue**. This warning appears because the app is a private prototype in testing mode.
-- Allow read-only access to Drive file information. The app can see file names and photo metadata. It can't change or delete anything.
-- The map fills in after the scan. The status line shows how many photos had a location. Click a pin to see the photo and a link to open it in Drive.
-- Sign-in lasts about an hour. After that, click **Sign in with Google** again.
+- **Photos on your computer or phone:** click **Choose photos** or **Choose folder**, or drag photos onto the map. No sign-in is needed.
+  - On an **iPhone**, Safari removes the location from photos picked from the photo library unless you turn it on. In the picker, tap **Options** and switch on **Location**. Alternatively, use the page on a computer with the original photos.
+- **Photos in Google Drive:** click **From Google Drive** and sign in. Your account must be on the test-user list.
+  - Google shows **"Google hasn't verified this app"**. Click **Continue**. The app is a private prototype in testing mode.
+  - Allow access to "the specific Google Drive files you use with this app". The app sees only the photos you pick.
+  - Pick photos, holding Ctrl or Cmd to pick several, then click **Select**. You can open folders to browse inside them, but you can't select a whole folder.
+  - Sign-in lasts about an hour.
+- Click a pin to see the photo, its date and links to Google Maps (and Drive). **Clear** empties the map.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---|---|
-| "Setup needed" | `CONFIG` values not filled in or not committed yet |
-| Sign-in popup says `redirect_uri_mismatch` or `origin_mismatch` | The OAuth client's Authorized JavaScript origin doesn't exactly match `https://n3g3ntr0pe.github.io` |
-| "Access blocked: app has not completed verification" | That Google account isn't in the consent screen's **Test users** list |
-| Map shows "For development purposes only" or a grey map | Billing isn't enabled, or the Maps key's website restriction doesn't match the page URL |
-| Few or no pins | Those photos have no GPS data (screenshots, messaging-app downloads and edited exports usually lose it), or the photos live in Google Photos rather than Drive |
-| Pin pop-up shows no image | The Drive thumbnail couldn't load. The "Open in Google Drive" link still works |
+| "Setup needed" | `MAPS_API_KEY` not filled in |
+| No "From Google Drive" button | `OAUTH_CLIENT_ID` not filled in, or a Google script failed to load (see console) |
+| Sign-in says `origin_mismatch` | The client's JavaScript origins don't exactly match the page's origin. Changes can take minutes to hours to apply |
+| "Access blocked: app has not completed verification" | That Google account isn't in **Test users** |
+| Picker says "API developer key is invalid" | The key is missing `https://docs.google.com/*` or the Picker API restriction |
+| Grey map or "Google Maps rejected the API key" | Billing, or the key's website restriction doesn't match the page URL (`localhost`, not `127.0.0.1`) |
+| Few or no pins | Those photos have no GPS data. Screenshots, messaging-app copies, edited exports and iPhone uploads without **Location** switched on usually have none |
+| Pop-up shows no image | The browser can't display that format (HEIC outside Safari) and the photo has no embedded thumbnail |
 
-## Notes
+## Local testing
 
-- The page scans every image in the user's own Drive, including files shared with them that appear in their Drive. Shared drives aren't included.
-- Testing mode allows up to 100 test users, which is plenty for a prototype. Making it public would require Google's verification process for this scope.
+```
+python3 -m http.server 8000 --bind 127.0.0.1
+```
+
+Open `http://localhost:8000`, not `127.0.0.1:8000`, so that it matches the key and the OAuth origins.
