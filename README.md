@@ -9,7 +9,7 @@ Live site (once Pages is on): **https://n3g3ntr0pe.github.io/sitevisits/**
 ## 1. Publish on GitHub Pages
 
 1. The repo is `n3g3ntr0pe/sitevisits`, with `index.html` at the root of `main`. It must stay public for Pages on a free plan.
-2. Go to **Settings → Pages**. Under **Build and deployment**, choose **Deploy from a branch**, select `main` and `/ (root)`, and click **Save**.
+2. Go to **Settings → Pages** (`https://github.com/n3g3ntr0pe/sitevisits/settings/pages`). Under **Build and deployment**, set the **Source** dropdown to **Deploy from a branch**. Under **Branch**, pick `main` and `/ (root)`, then click **Save**. Ignore the Visibility / GitHub Enterprise box on that page. It's an upsell and isn't needed.
 3. After a minute the site is live at `https://n3g3ntr0pe.github.io/sitevisits/`.
 
 At this point the page loads but shows "Setup needed". That's expected.
