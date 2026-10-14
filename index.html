@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Map</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1f2328; --muted:#59636e; --accent:#1a73e8; --border:#d1d9e0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#9198a1; --accent:#4c8df6; --border:#30363d; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  #status { flex: 1; min-width: 200px; font-size: 14px; color: var(--muted); }
+  button {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  #map { flex: 1; }
+  /* Info windows always render on a white background, so keep their text dark. */
+  .info { max-width: 260px; font-size: 13px; line-height: 1.4; color: #1f2328; }
+  .info img { display: block; width: 100%; border-radius: 4px; margin-bottom: 6px; }
+  .info a { color: #1a73e8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Photo Map</h1>
+  <span id="status">Loading…</span>
+  <button id="signin" disabled>Sign in with Google</button>
+  <button id="signout" class="secondary" hidden>Sign out</button>
+</header>
+<div id="map"></div>
+
+<script>
+// ─── Configuration: fill these in (see README.md) ────────────────────────────
+const CONFIG = {
+  OAUTH_CLIENT_ID: 'YOUR_CLIENT_ID.apps.googleusercontent.com',
+  MAPS_API_KEY:    'YOUR_MAPS_API_KEY',
+  MAP_ID:          'DEMO_MAP_ID', // fine for a prototype; create a real Map ID later
+};
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SCOPE  = 'https://www.googleapis.com/auth/drive.metadata.readonly';
+const QUERY  = "mimeType contains 'image/' and trashed = false";
+const FIELDS = 'nextPageToken,files(id,name,thumbnailLink,webViewLink,imageMediaMetadata(location,time))';
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (text) => { $('status').textContent = text; };
+
+let map, infoWindow, clusterer, tokenClient;
+let accessToken = null;
+let markers = [];
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Could not load ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+function loadGoogleMaps() {
+  return new Promise((resolve, reject) => {
+    window.__onMapsReady = resolve;
+    window.gm_authFailure = () =>
+      setStatus('Google Maps rejected the API key. Check the key and its website restriction (see README).');
+    const params = new URLSearchParams({
+      key: CONFIG.MAPS_API_KEY, v: 'weekly', libraries: 'marker',
+      loading: 'async', callback: '__onMapsReady',
+    });
+    loadScript('https://maps.googleapis.com/maps/api/js?' + params).catch(reject);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Drive returns EXIF time as "YYYY:MM:DD HH:MM:SS"
+function formatTime(t) {
+  if (!t) return '';
+  return t.replace(/^(\d{4}):(\d{2}):(\d{2})\s+(\d{2}:\d{2}).*$/, '$1-$2-$3 $4');
+}
+
+async function init() {
+  if (CONFIG.OAUTH_CLIENT_ID.startsWith('YOUR_') || CONFIG.MAPS_API_KEY.startsWith('YOUR_')) {
+    setStatus('Setup needed: add the OAuth client ID and Maps API key to CONFIG in index.html.');
+    return;
+  }
+  try {
+    await Promise.all([
+      loadGoogleMaps(),
+      loadScript('https://accounts.google.com/gsi/client'),
+      loadScript('https://unpkg.com/@googlemaps/markerclusterer@2/dist/index.min.js'),
+    ]);
+  } catch (err) {
+    setStatus(err.message);
+    return;
+  }
+
+  map = new google.maps.Map($('map'), {
+    center: { lat: 20, lng: 0 }, zoom: 2,
+    mapId: CONFIG.MAP_ID, streetViewControl: false,
+  });
+  infoWindow = new google.maps.InfoWindow();
+
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.OAUTH_CLIENT_ID,
+    scope: SCOPE,
+    callback: onToken,
+    error_callback: (err) => setStatus('Sign-in did not finish (' + (err.type || 'unknown') + '). Try again.'),
+  });
+
+  $('signin').disabled = false;
+  $('signin').onclick = () => tokenClient.requestAccessToken();
+  $('signout').onclick = signOut;
+  setStatus('Sign in with the Google account that holds your photos.');
+}
+
+function onToken(resp) {
+  if (resp.error) {
+    setStatus('Sign-in failed: ' + resp.error);
+    return;
+  }
+  accessToken = resp.access_token;
+  $('signin').textContent = 'Reload photos';
+  $('signout').hidden = false;
+  loadPhotos();
+}
+
+async function loadPhotos() {
+  clearMarkers();
+  $('signin').disabled = true;
+  let total = 0;
+  const located = [];
+  let pageToken;
+
+  try {
+    do {
+      const params = new URLSearchParams({ q: QUERY, fields: FIELDS, pageSize: '1000', spaces: 'drive' });
+      if (pageToken) params.set('pageToken', pageToken);
+
+      const res = await fetch('https://www.googleapis.com/drive/v3/files?' + params, {
+        headers: { Authorization: 'Bearer ' + accessToken },
+      });
+      if (res.status === 401) {
+        accessToken = null;
+        $('signin').textContent = 'Sign in with Google';
+        throw new Error('Your session expired. Sign in again.');
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error?.message || 'Drive API error ' + res.status);
+      }
+
+      const data = await res.json();
+      for (const f of data.files || []) {
+        total++;
+        const loc = f.imageMediaMetadata?.location;
+        if (loc && Number.isFinite(loc.latitude) && Number.isFinite(loc.longitude)
+            && !(loc.latitude === 0 && loc.longitude === 0)) {
+          located.push(f);
+        }
+      }
+      setStatus(`Scanning Drive… ${total} photos checked, ${located.length} with a location`);
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+
+    plot(located);
+    setStatus(located.length
+      ? `${located.length} of ${total} photos have a location.`
+      : `None of your ${total} photos have location data to plot.`);
+  } catch (err) {
+    setStatus(err.message);
+  } finally {
+    $('signin').disabled = false;
+  }
+}
+
+function plot(files) {
+  const bounds = new google.maps.LatLngBounds();
+  markers = files.map((f) => {
+    const position = {
+      lat: f.imageMediaMetadata.location.latitude,
+      lng: f.imageMediaMetadata.location.longitude,
+    };
+    bounds.extend(position);
+    const marker = new google.maps.marker.AdvancedMarkerElement({ position, title: f.name });
+    marker.addListener('click', () => {
+      infoWindow.setContent(infoHtml(f));
+      infoWindow.open({ map, anchor: marker });
+    });
+    return marker;
+  });
+
+  clusterer = new markerClusterer.MarkerClusterer({ map, markers });
+
+  if (files.length === 1) {
+    map.setCenter(bounds.getCenter());
+    map.setZoom(14);
+  } else if (files.length > 1) {
+    map.fitBounds(bounds, 40);
+  }
+}
+
+function infoHtml(f) {
+  // Thumbnail links are short-lived, so they're fetched fresh on every load.
+  const thumb = f.thumbnailLink ? f.thumbnailLink.replace(/=s\d+$/, '=s400') : '';
+  const when = formatTime(f.imageMediaMetadata?.time);
+  return `<div class="info">
+    ${thumb ? `<img src="${escapeHtml(thumb)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+    <strong>${escapeHtml(f.name)}</strong>
+    ${when ? `<br>${escapeHtml(when)}` : ''}
+    <br><a href="${escapeHtml(f.webViewLink)}" target="_blank" rel="noopener">Open in Google Drive</a>
+  </div>`;
+}
+
+function clearMarkers() {
+  if (infoWindow) infoWindow.close();
+  if (clusterer) clusterer.clearMarkers();
+  markers.forEach((m) => { m.map = null; });
+  markers = [];
+}
+
+function signOut() {
+  if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {});
+  accessToken = null;
+  clearMarkers();
+  $('signin').textContent = 'Sign in with Google';
+  $('signout').hidden = true;
+  setStatus('Signed out.');
+}
+
+init();
+</script>
+</body>
+</html>
